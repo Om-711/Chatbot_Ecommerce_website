@@ -4,3 +4,4 @@ uvicorn
 fastapi
 pandas
 numpy
+langchain-google-genai
