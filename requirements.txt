@@ -1,2 +1,6 @@
 langchain
 langchain-community
+uvicorn
+fastapi
+pandas
+numpy
