@@ -26,7 +26,8 @@ app.add_middleware(
 )
 
 products, users = making_data_endpoint()
-os.environ["GOOGLE_API_KEY"] = 'AIzaSyCpCk8y8l3IU08n9_u_EWajQv-pibrBdps'  
+os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
+
 
 async def give_detail_async(user_data, option):
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
