@@ -6,7 +6,6 @@ from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import LLMChain
-from langchain.memory import ConversationBufferMemory
 from langchain_community.embeddings import SentenceTransformerEmbeddings
 from functools import lru_cache
 from pymongo import MongoClient
@@ -15,6 +14,7 @@ import os
 
 app = FastAPI()
 
+# ----------------- Middleware -----------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -27,11 +27,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "YOUR_GOOGLE_API_KEY")
+# ----------------- Environment -----------------
+os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "AIzaSyAIzbhiQ1Ga-XfzozyoYugrrhwAXtdrxB8")
 
 # ----------------- MongoDB Data -----------------
 def making_data():
-    mongo_url = os.getenv("MONGO_URL")  # set your Mongo URI as env variable
+    mongo_url = "mongodb+srv://arshadmansuri1825:u1AYlNbjuA5FpHbb@cluster1.2majmfd.mongodb.net/ECommerce"
+    if not mongo_url:
+        raise Exception("MONGO_URL not set in environment")
+
     client = MongoClient(mongo_url)
     db = client["ECommerce"]
     product_collection = db["products"]
@@ -66,20 +70,22 @@ def making_data():
             user_data.append({
                 "user_id": str(u["_id"]),
                 "productID": str(history.get("productId", "")),
-                "event": history.get("event", {}).get("type","Not Found"),
+                "event": history.get("event", {}).get("type", "Not Found"),
                 "Timestamp": history.get("time", ""),
-                "duration": history.get("duration", 0)/1000
+                "duration": history.get("duration", 0) / 1000
             })
         for order in u.get("orders", []):
             order_data.append({
-                'user_id': str(u["_id"]),
+                "user_id": str(u["_id"]),
                 "orderID": order
             })
 
     df_products = pd.DataFrame(product_data)
     df_user = pd.DataFrame(user_data)
     df_orders = pd.DataFrame(order_data)
+
     return df_products, df_user, df_orders
+
 
 products, users, orders = making_data()
 products = products[['name', 'category', 'price', 'description', 'productID']]
@@ -92,7 +98,7 @@ chunks = splitter.create_documents([combined_text])
 embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
 
 if os.path.exists("faiss_index"):
-    vector_store = FAISS.load_local("faiss_index", embeddings)
+    vector_store = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
     vector_store = FAISS.from_documents(chunks, embeddings)
     vector_store.save_local("faiss_index")
@@ -100,16 +106,19 @@ else:
 # ----------------- LLM -----------------
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
 
+# ----------------- Cached Search -----------------
 @lru_cache(maxsize=100)
 def cached_search(query: str):
     return vector_store.similarity_search(query, k=5)
 
+# ----------------- AI Chat -----------------
 async def chat_ai_async(user_id: str, question: str):
     if not question:
         return {"message": "No query found for user.", "options": ["Back"]}
     try:
         docs = cached_search(question)
         context = "\n".join([d.page_content for d in docs])
+
         prompt = PromptTemplate(
             template="""
             You are a helpful chatbot for an e-commerce website. 
@@ -126,7 +135,6 @@ async def chat_ai_async(user_id: str, question: str):
             https://apnabzaar.netlify.app/productdetail/product_id
             Replace `product_id` with the product's `id` value from the Product Data.
             5. Do not provide any information that is not present in the context. Do not add technical notes, disclaimers, or extra sentences—keep it to 1–2 lines.
-            "
 
             Context:
             {context}
@@ -138,9 +146,15 @@ async def chat_ai_async(user_id: str, question: str):
             """,
             input_variables=["context", "question", "products", "orders"]
         )
+
         chain = LLMChain(llm=llm, prompt=prompt)
-        result = await chain.ainvoke({"context": context, "question": question, "products": products.to_string(), "orders": orders.to_string()})
-        return {"message": result.get("text", str(result))}
+        result = await chain.ainvoke({
+            "context": context,
+            "question": question,
+            "products": products.to_string(),
+            "orders": orders.to_string()
+        })
+        return {"message": result["text"]}
     except Exception as e:
         return {"message": f"Internal error: {str(e)}"}
 
@@ -149,15 +163,18 @@ async def chat_ai_async(user_id: str, question: str):
 async def chat(user_id: str, option: str):
     if option == "main":
         return JSONResponse({
-            "message": f" Hello Betwa! Welcome to ApnaBazzar! How may I help you today?",
+            "message": f"Hello Betwa! Welcome to ApnaBazzar! How may I help you today?",
             "options": ["Order Related", "Product Related", "Others"]
         })
+
     elif option == "Order Related":
         return JSONResponse({"message": "Please choose an option related to your orders:",
                              "options": ["Recent Order", "All Orders", "Track Order", "Back"]})
+
     elif option == "Product Related":
         return JSONResponse({"message": "Need help with products? Select an option below:",
                              "options": ["Request Product", "Back"]})
+
     elif option == "Others":
         return JSONResponse({"message": "You can chat with our AI assistant for general help 💬",
                              "options": ["Chat with AI Assistant", "Back"]})
@@ -183,9 +200,10 @@ async def chat(user_id: str, option: str):
                              "options": ["Back"]})
 
     elif option == "Back":
-        return JSONResponse(await chat(user_id, "main"))
+        return await chat(user_id, "main")
 
     return JSONResponse({"message": "Invalid option. Try again.", "options": ["Back"]})
+
 
 @app.get("/chat/ai")
 async def chat_ai_endpoint(user_id: str, question: str):
