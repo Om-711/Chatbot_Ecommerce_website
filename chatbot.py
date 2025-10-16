@@ -82,7 +82,7 @@ def making_data():
         for order in u.get("orders", []):
             order_data.append({
                 'user_id': str(u["_id"]),
-                "orderID": order
+                "orderID": str(order)
             })
         
     # print(order_data)
@@ -196,15 +196,15 @@ async def chat(user_id: str, option: str):
 
     elif option == "Recent Order":
         user_id_orders = orders[orders['user_id'] == user_id]
-        return JSONResponse(user_id_orders[-1:])
+        return user_id_orders[-1:]
 
     elif option == "All Orders":
         user_id_orders = orders[orders['user_id'] == user_id]
-        return JSONResponse(user_id_orders[-5:])
+        return user_id_orders[-5:]
 
     elif option == "Track Order":
         user_id_orders = orders[orders['user_id'] == user_id]
-        return JSONResponse(user_id_orders[-1:])
+        return user_id_orders[-1:]
 
     elif option == "Request Product":
         return JSONResponse({"message": "Send us the product name you want to request (not available on site).",
