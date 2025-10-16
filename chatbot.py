@@ -8,8 +8,13 @@ from langchain.chains import LLMChain
 from langchain.memory import ConversationBufferMemory
 from fastapi.middleware.cors import CORSMiddleware
 import os
-from main import making_data_endpoint
 from langchain.embeddings import SentenceTransformerEmbeddings
+from pydantic import BaseModel
+import pandas as pd
+from pymongo import MongoClient
+import numpy as np
+from functools import lru_cache
+
 
 app = FastAPI()
 
@@ -25,66 +30,142 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-products, users = making_data_endpoint()
-os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
+os.environ["GOOGLE_API_KEY"] = 'AIzaSyCpCk8y8l3IU08n9_u_EWajQv-pibrBdps'  
+
+from pymongo import MongoClient
+import pandas as pd
+
+def making_data():
+        
+    mongo_url = "mongodb+srv://arshadmansuri1825:u1AYlNbjuA5FpHbb@cluster1.2majmfd.mongodb.net/ECommerce"  # e.g. mongodb+srv://username:password@cluster0.mongodb.net/myDatabase?retryWrites=true&w=majority
+
+    client = MongoClient(mongo_url)
+
+    db = client["ECommerce"]
+
+    product_collection = db["products"]
+    user_data_collection = db["users"]
+
+    products = list(product_collection.find())
+    users  = list(user_data_collection.find())
+
+    product_data = []
+    for p in products:
+        if(p.get("isActive")):
+            product_data.append({
+                "productID": str(p["_id"]),
+                "name": p["name"],
+                "price": p["price"],
+                "category": p["category"],
+                "description": p.get("description", ""),
+                "images": p.get("images", "Not Found"),
+                "stock" : p.get("stock", "0"),
+                "rating" : p.get("rating", "0"),
+                "reviews" : p.get("reviews", "0"),
+                "createdAt": p.get("createdAt", ""),
+                "updatedAt": p.get("updatedAt", ""),
+                "isActive": p.get("isActive", True)
+            })
+
+    user_data = []
+    order_data = []
+    for u in users:
+        for history in u.get("history", []):
+            user_data.append({
+                "user_id": str(u["_id"]),
+                "productID": str(history.get("productId", "")),
+                "event": history.get("event", {}).get("type","Not Found"),
+                "Timestamp": history.get("time", ""),
+                "duration":history.get("duration", 0)/1000 # Convert milli-second to second betwa
+            })
+        # print(u)
+        for order in u.get("orders", []):
+            order_data.append({
+                'user_id': str(u["_id"]),
+                "orderID": order
+            })
+        
+    # print(order_data)
+    df_products = pd.DataFrame(product_data)
+    # print(df_products.head())
+
+    df_user = pd.DataFrame(user_data)
+    # print(df_user.head())
+
+    df_orders = pd.DataFrame(order_data)
+    # print(df_orders.head())
+
+    return df_products, df_user, df_orders
+
+# Load and preprocess data once at startup so that afterwards it can used directly and take less time
+products, users, orders = making_data()
+products = products[['name', 'category', 'price', 'description']]
+
+combined_text = products.to_string() + "\n" + users.to_string()
+splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+chunks = splitter.create_documents([combined_text])
+
+# embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+
+vector_store = None
+if vector_store is None:
+    try:
+        vector_store = FAISS.load_local("faiss_index", embeddings)
+    except:
+        vector_store = FAISS.from_documents(chunks, embeddings)
+        vector_store.save_local("faiss_index")
+
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
 
 
-async def give_detail_async(user_data, option):
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
 
-    prompt = PromptTemplate(
-        template="""
-        You are a helpful assistant.
-        You are given user data in dataframe format. you have to give ans about this options in short 1-2 lines only.
 
-        user data : {user_data}
-        option : {option}
-        """,
-        input_variables=["user_data", "option"]
-    )
+@lru_cache(maxsize=100)
+def cached_search(query):
+    return vector_store.similarity_search(query, k=5)
 
-    chain = LLMChain(llm=llm, prompt=prompt)
-    result = await chain.ainvoke({"user_data": user_data, "option": option})
-    
-    return {"message": result["text"] if isinstance(result, dict) and "text" in result else str(result)}
 
 async def chat_ai_async(user_id: str, question: str):
     if not question:
         return {"message": "No query found for user.", "options": ["Back"]}
 
     try:
-        products, user = making_data_endpoint()
-
-        combined_text = products.to_string() + "\n" + user.to_string()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.create_documents([combined_text])
-
-        # embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-        embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-        vector_store = FAISS.from_documents(chunks, embeddings)
-
-        docs = vector_store.similarity_search(question, k=5)
+        # if user ask same question again then use cached result to answer it
+        docs = cached_search(question)
         context = "\n".join([d.page_content for d in docs])
-
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
 
         prompt = PromptTemplate(
             template="""
-            You are a helpful Chatbot for an E-commerce website.
-            Answer all questions using only the provided context.
-            If the context is insufficient, reply with "No data found".
-            Respond concisely in 1–2 lines only.
+            You are a helpful chatbot for an e-commerce website. 
+            Use ONLY the information found in the provided context. Answer concisely in 1–2 lines.
+
+            If the context does not contain enough information to answer, reply exactly: "No data found".
+
+            Rules:
+            1. If the user requests a product recommendation, recommend up to 3 products that best match the user's preferences and needs, using only product fields present in the context.
+            2. If the user asks for a product that is not available in the context, reply exactly:
+            "We are sorry, the product you requested is currently not available on our site. However, we value your interest and would be happy to assist you with similar products or alternatives that meet your needs. Please let us know what you're looking for, and we'll do our best to help you find a suitable option."
+            3. If the user asks for order details, return only order information present in the order data (e.g., order id, items, status, delivery ETA). Do NOT invent or assume missing fields.
+            4. If the user asks for a product's price, reply with the price, Name of product and the product link in this exact format:
+            https://apnabzaar.netlify.app/productdetail/product_id
+            Replace `product_id` with the product's `id` value from the product data.
+            5. Do not provide any information that is not present in the context. Do not add technical notes, disclaimers, or extra sentences—keep it to 1–2 lines.
+            "
 
             Context:
             {context}
 
             Question: {question}
+
+            Product Data : {products}
+            Order Data : {orders}
             """,
-            input_variables=["context", "question"]
+            input_variables=["context", "question", "products", "orders"]
         )
 
         chain = LLMChain(llm=llm, prompt=prompt)
-        result = await chain.ainvoke({"context": context, "question": question})
+        result = await chain.ainvoke({"context": context, "question": question, "products": products.to_string(), "orders": orders.to_string()})
 
         return {"message": result["text"] if isinstance(result, dict) and "text" in result else str(result)}
 
@@ -103,33 +184,37 @@ async def chat(user_id: str, option: str):
             "message": f" Hello Betwa! Welcome to ApnaBazzar! How may I help you today?",
             "options": ["Order Related", "Product Related", "Others"]
         })
-    if option == "Order Related":
+    elif option == "Order Related":
         return JSONResponse({"message": "Please choose an option related to your orders:",
                              "options": ["Recent Order", "All Orders", "Track Order", "Back"]})
-    if option == "Product Related":
+    elif option == "Product Related":
         return JSONResponse({"message": "Need help with products? Select an option below:",
                              "options": ["Request Product", "Back"]})
-    if option == "Others":
+    elif option == "Others":
         return JSONResponse({"message": "You can chat with our AI assistant for general help 💬",
                              "options": ["Chat with AI Assistant", "Back"]})
 
-    if option in ("Recent Order", "All Orders", "Track Order"):
-        user_orders = users.get(user_id, {})
-        if user_orders:
-            resp = await give_detail_async(user_orders, option)
-            return JSONResponse(resp)
-        else:
-            return JSONResponse({"message": "No orders found.", "options": ["Back"]})
+    elif option == "Recent Order":
+        user_id_orders = orders[orders['user_id'] == user_id]
+        return JSONResponse(user_id_orders[-1:])
 
-    if option == "Request Product":
+    elif option == "All Orders":
+        user_id_orders = orders[orders['user_id'] == user_id]
+        return JSONResponse(user_id_orders[-5:])
+
+    elif option == "Track Order":
+        user_id_orders = orders[orders['user_id'] == user_id]
+        return JSONResponse(user_id_orders[-1:])
+
+    elif option == "Request Product":
         return JSONResponse({"message": "Send us the product name you want to request (not available on site).",
                              "options": ["Back"]})
 
-    if option == "Chat with AI Assistant":
+    elif option == "Chat with AI Assistant":
         return JSONResponse({"message": "You’re now connected to the AI Assistant. Please type your question below:",
                              "options": ["Back"]})
 
-    if option == "Back":
+    elif option == "Back":
         return JSONResponse(await chat(user_id, "main"))
 
     return JSONResponse({"message": "Invalid option. Try again.", "options": ["Back"]})
