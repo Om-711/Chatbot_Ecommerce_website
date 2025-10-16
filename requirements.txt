@@ -14,3 +14,4 @@ langchain-google-genai
 sqlalchemy
 faiss-cpu
 pymongo
+sentence-transformer
