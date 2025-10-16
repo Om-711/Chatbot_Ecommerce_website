@@ -208,10 +208,11 @@ async def chat(user_id: str, option: str):
     return JSONResponse({"message": "Invalid option. Try again.", "options": ["Back"]})
 
 
-@app.get("/chat/ai")
-async def chat_ai_endpoint(user_id: str, question: str):
-    resp = await chat_ai_async(user_id, question)
-    return JSONResponse(resp)
+if __name__ == "__main__":
+    import sys
+    port = int(os.environ.get("PORT", "10000"))  # Default fallback
+    print(f"🚀 Starting server on port {port}", file=sys.stderr)
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 
 # ---------- Render Entry Point ----------
