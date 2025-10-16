@@ -8,7 +8,7 @@ from langchain.chains import LLMChain
 from langchain.memory import ConversationBufferMemory
 from fastapi.middleware.cors import CORSMiddleware
 import os
-from langchain.embeddings import SentenceTransformerEmbeddings
+from langchain_community.embeddings import SentenceTransformerEmbeddings
 from pydantic import BaseModel
 import pandas as pd
 from pymongo import MongoClient
