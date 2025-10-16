@@ -128,7 +128,7 @@ def startup_event():
 def cached_search(query):
     return vector_store.similarity_search(query, k=5)
 
-
+@app.get("/chat_with_ai")
 async def chat_ai_async(user_id: str, question: str):
     if not question:
         return {"message": "No query found for user.", "options": ["Back"]}
