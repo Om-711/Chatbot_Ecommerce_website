@@ -207,15 +207,13 @@ async def chat(user_id: str, option: str):
 
     return JSONResponse({"message": "Invalid option. Try again.", "options": ["Back"]})
 
-
-if __name__ == "__main__":
-    import sys
-    port = int(os.environ.get("PORT", "10000"))  # Default fallback
-    print(f"🚀 Starting server on port {port}", file=sys.stderr)
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-
 # ---------- Render Entry Point ----------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
+    import sys
+    import os
+    import uvicorn
+
+    port = int(os.environ.get("PORT", "10000"))  # Render auto-assigns port
+    print(f"🚀 Starting server on port {port}", file=sys.stderr)
     uvicorn.run("chatbot:app", host="0.0.0.0", port=port)
+
