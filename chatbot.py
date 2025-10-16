@@ -90,6 +90,7 @@ def making_data():
     df_orders = pd.DataFrame(order_data)
     return df_products, df_user, df_orders
 
+from threading import Thread
 
 @app.on_event("startup")
 def startup_event():
@@ -99,22 +100,27 @@ def startup_event():
     products, users, orders = making_data()
     products = products[["name", "category", "price", "description"]]
 
-    combined_text = products.to_string() + "\n" + users.to_string()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.create_documents([combined_text])
+    def init_vector_and_llm():
+        global embeddings, vector_store, llm
+        combined_text = products.to_string() + "\n" + users.to_string()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = splitter.create_documents([combined_text])
 
-    embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+        embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
 
-    try:
-        vector_store = FAISS.load_local("faiss_index", embeddings)
-        print("Loaded existing FAISS index.")
-    except:
-        vector_store = FAISS.from_documents(chunks, embeddings)
-        vector_store.save_local("faiss_index")
-        print("Created and saved new FAISS index.")
+        try:
+            vector_store = FAISS.load_local("faiss_index", embeddings)
+            print("Loaded existing FAISS index.")
+        except:
+            vector_store = FAISS.from_documents(chunks, embeddings)
+            vector_store.save_local("faiss_index")
+            print("Created and saved new FAISS index.")
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
-    print("Chatbot ready ✅")
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
+        print("Chatbot ready ✅")
+
+    # Run heavy initialization in background so port opens immediately
+    Thread(target=init_vector_and_llm).start()
 
 
 # ---------- Chat Logic ----------
