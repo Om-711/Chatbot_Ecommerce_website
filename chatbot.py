@@ -7,7 +7,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import LLMChain
 from langchain.memory import ConversationBufferMemory
-from langchain.embeddings import SentenceTransformerEmbeddings
+from langchain_community.embeddings import SentenceTransformerEmbeddings
 from functools import lru_cache
 from pymongo import MongoClient
 import pandas as pd
