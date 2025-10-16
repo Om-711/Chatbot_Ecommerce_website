@@ -5,19 +5,17 @@ from langchain_core.prompts import PromptTemplate
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import LLMChain
-from langchain.memory import ConversationBufferMemory
 from langchain.embeddings import SentenceTransformerEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
-from pydantic import BaseModel
 from functools import lru_cache
 from pymongo import MongoClient
 import pandas as pd
-import numpy as np
+from threading import Thread
 import os
-import uvicorn
 
 app = FastAPI()
 
+# ---------- CORS ----------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -32,13 +30,11 @@ app.add_middleware(
 
 os.environ["GOOGLE_API_KEY"] = "AIzaSyCpCk8y8l3IU08n9_u_EWajQv-pibrBdps"
 
+# ---------- Global variables ----------
+products = users = orders = vector_store = embeddings = llm = None
+ai_ready = False  # flag to indicate readiness
 
-# ---------- Lazy Initialization (important for Render) ----------
-products = users = orders = vector_store = None
-embeddings = None
-llm = None
-
-
+# ---------- Data preparation ----------
 def making_data():
     mongo_url = "mongodb+srv://arshadmansuri1825:u1AYlNbjuA5FpHbb@cluster1.2majmfd.mongodb.net/ECommerce"
     client = MongoClient(mongo_url)
@@ -90,18 +86,17 @@ def making_data():
     df_orders = pd.DataFrame(order_data)
     return df_products, df_user, df_orders
 
-from threading import Thread
-
+# ---------- Startup event ----------
 @app.on_event("startup")
 def startup_event():
-    global products, users, orders, embeddings, vector_store, llm
-    print("Initializing chatbot backend...")
+    global products, users, orders
 
+    print("Initializing chatbot backend...")
     products, users, orders = making_data()
     products = products[["name", "category", "price", "description"]]
 
     def init_vector_and_llm():
-        global embeddings, vector_store, llm
+        global embeddings, vector_store, llm, ai_ready
         combined_text = products.to_string() + "\n" + users.to_string()
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = splitter.create_documents([combined_text])
@@ -117,47 +112,55 @@ def startup_event():
             print("Created and saved new FAISS index.")
 
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.5)
+        ai_ready = True
         print("Chatbot ready ✅")
 
-    # Run heavy initialization in background so port opens immediately
+    # Run heavy initialization in background
     Thread(target=init_vector_and_llm).start()
 
-
-# ---------- Chat Logic ----------
+# ---------- Cached search ----------
 @lru_cache(maxsize=100)
 def cached_search(query):
+    global vector_store, ai_ready
+    if not ai_ready or vector_store is None:
+        return []
     return vector_store.similarity_search(query, k=5)
 
-@app.get("/chat_with_ai")
+# ---------- AI Chat ----------
 async def chat_ai_async(user_id: str, question: str):
+    global ai_ready
     if not question:
         return {"message": "No query found for user.", "options": ["Back"]}
 
+    if not ai_ready:
+        return {"message": "AI is still initializing. Please wait a few seconds."}
+
     try:
         docs = cached_search(question)
-        context = "\n".join([d.page_content for d in docs])
+        if not docs:
+            return {"message": "No data found.", "options": ["Back"]}
 
+        context = "\n".join([d.page_content for d in docs])
         prompt = PromptTemplate(
             template="""
-            You are a helpful chatbot for an e-commerce website. 
-            Use ONLY the information found in the provided context. Answer concisely in 1–2 lines.
-            If context lacks data, reply exactly: "No data found".
+You are a helpful chatbot for an e-commerce website. Use ONLY the information found in the provided context. Answer concisely in 1–2 lines.
 
-            Rules:
-            1. Recommend up to 3 products using context only.
-            2. If unavailable, reply with the apology message given.
-            3. For order details, use only real order data.
-            4. For product price, reply: "Name - Price - https://apnabzaar.netlify.app/productdetail/product_id"
-            5. No extra text or assumptions.
+If context lacks data, reply exactly: "No data found".
 
-            Context:
-            {context}
+Rules:
+1. Recommend up to 3 products using context only.
+2. For order details, only use real order data.
+3. For product price, reply with Name - Price - https://apnabzaar.netlify.app/productdetail/product_id
+4. Do not invent info.
 
-            Question: {question}
+Context:
+{context}
 
-            Product Data: {products}
-            Order Data: {orders}
-            """,
+Question: {question}
+
+Product Data: {products}
+Order Data: {orders}
+""",
             input_variables=["context", "question", "products", "orders"]
         )
 
@@ -174,7 +177,6 @@ async def chat_ai_async(user_id: str, question: str):
     except Exception as e:
         print("Error in chat_ai_async:", repr(e))
         return {"message": f"Internal error: {str(e)}"}
-
 
 # ---------- API Endpoints ----------
 @app.get("/chat")
@@ -213,13 +215,15 @@ async def chat(user_id: str, option: str):
 
     return JSONResponse({"message": "Invalid option. Try again.", "options": ["Back"]})
 
-# ---------- Render Entry Point ----------
+@app.get("/chat/ai")
+async def chat_ai_endpoint(user_id: str, question: str):
+    resp = await chat_ai_async(user_id, question)
+    return JSONResponse(resp)
+
+# ---------- Run server ----------
 if __name__ == "__main__":
     import sys
-    import os
     import uvicorn
-
-    port = int(os.environ.get("PORT", "10000"))  # Render auto-assigns port
+    port = int(os.environ.get("PORT", "10000"))
     print(f"🚀 Starting server on port {port}", file=sys.stderr)
     uvicorn.run("chatbot:app", host="0.0.0.0", port=port)
-
