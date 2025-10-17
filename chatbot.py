@@ -276,3 +276,8 @@ async def chat(user_id: str, option: str):
 async def chat_ai_endpoint(user_id: str, question: str):
     resp = await chat_ai_async(user_id, question)
     return JSONResponse(resp)
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
