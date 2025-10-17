@@ -280,4 +280,4 @@ async def chat_ai_endpoint(user_id: str, question: str):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("chatbot:app", host="0.0.0.0", port=port, reload=False)
